@@ -2,18 +2,16 @@ name: Auto-assign past contributors as reviewers
 
 on:
   pull_request:
-    branches:
-      - main
     types: [opened, synchronize, reopened]
 
 jobs:
   assign-reviewers:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # full history not needed, but safe
+          fetch-depth: 0
 
       - name: Get changed files
         id: files
@@ -22,52 +20,52 @@ jobs:
           gh pr view ${{ github.event.pull_request.number }} --json files --jq '.files[].path' >> $GITHUB_ENV
           echo "EOF" >> $GITHUB_ENV
         env:
-          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
 
-      - name: Find reviewers (PowerShell)
+      - name: Find reviewers (Bash)
         id: reviewers
-        shell: pwsh
         run: |
-          $Owner = "${{ github.repository_owner }}"
-          $Repo = "${{ github.event.repository.name }}"
-          $Token = "${{ secrets.PAT_TOKEN }}"
-          $Files = @"
-            ${{ env.FILES }}
-            "@ -split "`n"
+          OWNER=${{ github.repository_owner }}
+          REPO=${{ github.event.repository.name }}
+          TOKEN=${{ secrets.GITHUB_TOKEN }}
+          PR_AUTHOR=${{ github.actor }}
 
-          $Reviewers = @()
+          REVIEWERS=""
 
-          foreach ($FilePath in $Files) {
-            if ([string]::IsNullOrWhiteSpace($FilePath)) { continue }
+          while IFS= read -r FILE_PATH; do
+            [ -z "$FILE_PATH" ] && continue
 
-            $Url = "https://api.github.com/repos/$Owner/$Repo/commits?path=$FilePath&per_page=1"
-            $Response = Invoke-RestMethod -Uri $Url -Headers @{ Authorization = "Bearer $Token" }
+            echo "Checking file: $FILE_PATH"
+            resp=$(curl -s -H "Authorization: Bearer $TOKEN" \
+              "https://api.github.com/repos/$OWNER/$REPO/commits?path=$FILE_PATH&per_page=1")
 
-            $Login = $Response[0].author.login
-            $Name  = $Response[0].commit.author.name
-            $Email = $Response[0].commit.author.email
-            $Sha   = $Response[0].sha
+            login=$(echo "$resp" | jq -r '.[0].author.login // empty')
+            name=$(echo "$resp" | jq -r '.[0].commit.author.name // empty')
+            email=$(echo "$resp" | jq -r '.[0].commit.author.email // empty')
+            sha=$(echo "$resp" | jq -r '.[0].sha // empty')
 
-            Write-Output "File: $FilePath => sha=$Sha, login=$Login, name=$Name, email=$Email"
+            echo "→ sha=$sha, login=$login, name=$name, email=$email"
 
-            if ([string]::IsNullOrWhiteSpace($Login)) {
-              Write-Error "❌ No GitHub username found for $FilePath (email=$Email). Failing workflow."
+            if [ -z "$login" ] || [ "$login" = "null" ]; then
+              echo "❌ No GitHub username found for $FILE_PATH (email=$email)."
               exit 1
-            }
+            fi
 
-            $Reviewers += $Login
-          }
+            # Skip PR author
+            if [ "$login" != "$PR_AUTHOR" ]; then
+              REVIEWERS="$REVIEWERS $login"
+            fi
+          done <<< "${{ env.FILES }}"
 
-          # Deduplicate and skip PR author
-          $UniqueReviewers = $Reviewers | Sort-Object -Unique | Where-Object { $_ -ne "${{ github.actor }}" }
+          # Deduplicate reviewers
+          REVIEWERS=$(echo $REVIEWERS | xargs -n1 | sort -u | xargs)
 
-          if ($UniqueReviewers.Count -eq 0) {
-            Write-Error "❌ No valid reviewers found after filtering. Failing workflow."
+          if [ -z "$REVIEWERS" ]; then
+            echo "❌ No valid reviewers found. Failing workflow."
             exit 1
-          }
+          fi
 
-          $ReviewerList = $UniqueReviewers -join " "
-          echo "REVIEWERS=$ReviewerList" >> $env:GITHUB_ENV
+          echo "REVIEWERS=$REVIEWERS" >> $GITHUB_ENV
 
       - name: Assign reviewers to PR
         if: env.REVIEWERS != ''
@@ -75,4 +73,4 @@ jobs:
           echo "Adding reviewers: $REVIEWERS"
           gh pr edit ${{ github.event.pull_request.number }} --add-reviewer $REVIEWERS
         env:
-          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
