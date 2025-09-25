@@ -2,6 +2,8 @@ name: Auto-assign past contributors as reviewers
 
 on:
   pull_request:
+    branches:
+      - main
     types: [opened, synchronize, reopened]
 
 jobs:
