@@ -61,8 +61,11 @@ jobs:
           REVIEWERS=$(echo $REVIEWERS | xargs -n1 | sort -u | xargs)
 
           if [ -z "$REVIEWERS" ]; then
-            echo "❌ No valid reviewers found. Failing workflow."
-            exit 1
+            echo "ℹ️ No additional reviewers found (PR author is the only/most recent contributor to all files). Skipping reviewer assignment."
+            echo "REVIEWERS=" >> $GITHUB_ENV
+          else
+            echo "✅ Found reviewers: $REVIEWERS"
+            echo "REVIEWERS=$REVIEWERS" >> $GITHUB_ENV
           fi
 
           echo "REVIEWERS=$REVIEWERS" >> $GITHUB_ENV
