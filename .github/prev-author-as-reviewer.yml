@@ -1,0 +1,76 @@
+name: Auto-assign past contributors as reviewers
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  assign-reviewers:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history not needed, but safe
+
+      - name: Get changed files
+        id: files
+        run: |
+          echo "FILES<<EOF" >> $GITHUB_ENV
+          gh pr view ${{ github.event.pull_request.number }} --json files --jq '.files[].path' >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+        env:
+          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+
+      - name: Find reviewers (PowerShell)
+        id: reviewers
+        shell: pwsh
+        run: |
+          $Owner = "${{ github.repository_owner }}"
+          $Repo = "${{ github.event.repository.name }}"
+          $Token = "${{ secrets.PAT_TOKEN }}"
+          $Files = @"
+            ${{ env.FILES }}
+            "@ -split "`n"
+
+          $Reviewers = @()
+
+          foreach ($FilePath in $Files) {
+            if ([string]::IsNullOrWhiteSpace($FilePath)) { continue }
+
+            $Url = "https://api.github.com/repos/$Owner/$Repo/commits?path=$FilePath&per_page=1"
+            $Response = Invoke-RestMethod -Uri $Url -Headers @{ Authorization = "Bearer $Token" }
+
+            $Login = $Response[0].author.login
+            $Name  = $Response[0].commit.author.name
+            $Email = $Response[0].commit.author.email
+            $Sha   = $Response[0].sha
+
+            Write-Output "File: $FilePath => sha=$Sha, login=$Login, name=$Name, email=$Email"
+
+            if ([string]::IsNullOrWhiteSpace($Login)) {
+              Write-Error "❌ No GitHub username found for $FilePath (email=$Email). Failing workflow."
+              exit 1
+            }
+
+            $Reviewers += $Login
+          }
+
+          # Deduplicate and skip PR author
+          $UniqueReviewers = $Reviewers | Sort-Object -Unique | Where-Object { $_ -ne "${{ github.actor }}" }
+
+          if ($UniqueReviewers.Count -eq 0) {
+            Write-Error "❌ No valid reviewers found after filtering. Failing workflow."
+            exit 1
+          }
+
+          $ReviewerList = $UniqueReviewers -join " "
+          echo "REVIEWERS=$ReviewerList" >> $env:GITHUB_ENV
+
+      - name: Assign reviewers to PR
+        if: env.REVIEWERS != ''
+        run: |
+          echo "Adding reviewers: $REVIEWERS"
+          gh pr edit ${{ github.event.pull_request.number }} --add-reviewer $REVIEWERS
+        env:
+          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
