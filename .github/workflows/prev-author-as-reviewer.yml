@@ -22,7 +22,7 @@ jobs:
           gh pr view ${{ github.event.pull_request.number }} --json files --jq '.files[].path' >> $GITHUB_ENV
           echo "EOF" >> $GITHUB_ENV
         env:
-          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
 
       - name: Find reviewers (PowerShell)
         id: reviewers
@@ -75,4 +75,4 @@ jobs:
           echo "Adding reviewers: $REVIEWERS"
           gh pr edit ${{ github.event.pull_request.number }} --add-reviewer $REVIEWERS
         env:
-          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
