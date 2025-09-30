@@ -13,11 +13,29 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Get changed files
+      # Install GitHub CLI
+      - name: Setup GitHub CLI
+        uses: actions4gh/setup-gh@v1.0.2
+
+      # Specify the paths to include (space-separated, e.g. "src/ lib/")
+      - name: Set included paths
+        run: echo "INCLUDE_PATHS=app/ test/" >> $GITHUB_ENV
+
+      - name: Get changed files (filtered by included paths)
         id: files
         run: |
+          ALL_FILES=$(gh pr view ${{ github.event.pull_request.number }} --json files --jq '.files[].path')
+          FILTERED_FILES=""
+          for FILE in $ALL_FILES; do
+            for PATH in $INCLUDE_PATHS; do
+              if [[ "$FILE" == "$PATH"* ]]; then
+                FILTERED_FILES="${FILTERED_FILES}${FILE}"$'\n'  
+                break
+              fi
+            done
+          done
           echo "FILES<<EOF" >> $GITHUB_ENV
-          gh pr view ${{ github.event.pull_request.number }} --json files --jq '.files[].path' >> $GITHUB_ENV
+          echo "$FILTERED_FILES" >> $GITHUB_ENV
           echo "EOF" >> $GITHUB_ENV
         env:
           GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
